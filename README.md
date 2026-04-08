@@ -186,6 +186,7 @@ Steps:
 
 For queries or collaboration:
 - Open an issue on GitHub  
+- 📧 Connect with me at: [tiwariaagman1705@gmail.com](mailto:tiwariaagman1705@gmail.com)
 
 ---
 
