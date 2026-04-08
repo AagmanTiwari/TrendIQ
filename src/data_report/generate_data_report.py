@@ -1,77 +1,126 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
+import sys
+import logging
 
-import os, sys
 from src.exception import CustomException
+
+logger = logging.getLogger(__name__)
 
 
 class DashboardGenerator:
-    def __init__(self, data):
-        self.data = data
+    def __init__(self, data: pd.DataFrame):
+        self.data = self._preprocess(data.copy())
+
+    def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and cast columns to correct types."""
+        df["Over_All_Rating"] = pd.to_numeric(df["Over_All_Rating"], errors="coerce")
+        df["Rating"] = pd.to_numeric(df["Rating"], errors="coerce")
+        df["Price"] = pd.to_numeric(
+            df["Price"].astype(str).str.replace("₹", "", regex=False).str.strip(),
+            errors="coerce"
+        )
+        return df
 
     def display_general_info(self):
-        st.header('General Information')
+        st.header("📊 General Information")
 
-        # Convert 'Over_All_Rating' and 'Price' columns to numeric
-        self.data['Over_All_Rating'] = pd.to_numeric(self.data['Over_All_Rating'], errors='coerce')
-        self.data['Price'] = pd.to_numeric(
-            self.data['Price'].apply(lambda x: x.replace("₹", "")),
-            errors='coerce')
+        col1, col2 = st.columns(2)
 
-        self.data["Rating"] = pd.to_numeric(self.data['Rating'], errors='coerce')
+        with col1:
+            product_ratings = (
+                self.data.groupby("Product Name", as_index=False)["Over_All_Rating"]
+                .mean()
+                .dropna()
+            )
+            fig_pie = px.pie(
+                product_ratings,
+                values="Over_All_Rating",
+                names="Product Name",
+                title="Average Ratings by Product",
+                hole=0.3,
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-        # Summary pie chart of average ratings by product
-        product_ratings = self.data.groupby('Product Name', as_index=False)['Over_All_Rating'].mean().dropna()
+        with col2:
+            avg_prices = (
+                self.data.groupby("Product Name", as_index=False)["Price"]
+                .mean()
+                .dropna()
+            )
+            fig_bar = px.bar(
+                avg_prices,
+                x="Product Name",
+                y="Price",
+                color="Product Name",
+                title="Average Price Comparison",
+                color_discrete_sequence=px.colors.qualitative.Bold,
+                text_auto=".2s",
+            )
+            fig_bar.update_xaxes(title="Product Name")
+            fig_bar.update_yaxes(title="Average Price (₹)")
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        fig_pie = px.pie(product_ratings, values='Over_All_Rating', names='Product Name',
-                         title='Average Ratings by Product')
-        st.plotly_chart(fig_pie)
-
-        # Bar chart comparing average prices of different products with different colors
-        avg_prices = self.data.groupby('Product Name', as_index=False)['Price'].mean().dropna()
-        fig_bar = px.bar(avg_prices, x='Product Name', y='Price', color='Product Name',
-                         title='Average Price Comparison Between Products',
-                         color_discrete_sequence=px.colors.qualitative.Bold)
-        fig_bar.update_xaxes(title='Product Name')
-        fig_bar.update_yaxes(title='Average Price')
-        st.plotly_chart(fig_bar)
+        # Rating distribution across all products
+        fig_hist = px.histogram(
+            self.data.dropna(subset=["Rating"]),
+            x="Rating",
+            color="Product Name",
+            barmode="overlay",
+            title="Rating Distribution Across Products",
+            nbins=10,
+            opacity=0.75,
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
 
     def display_product_sections(self):
-        st.header('Product Sections')
+        st.header("🧾 Product Sections")
 
-        product_names = self.data['Product Name'].unique()
-        columns = st.columns(len(product_names))
+        product_names = self.data["Product Name"].unique()
 
-        for i, product_name in enumerate(product_names):
-            product_data = self.data[self.data['Product Name'] == product_name]
+        for product_name in product_names:
+            product_data = self.data[self.data["Product Name"] == product_name]
 
-            with columns[i]:
-                st.subheader(f'{product_name}')
+            with st.expander(f"📦 {product_name}", expanded=True):
+                m1, m2, m3 = st.columns(3)
+                m1.metric("💰 Avg Price", f"₹{product_data['Price'].mean():.2f}")
+                m2.metric("⭐ Avg Rating", f"{product_data['Over_All_Rating'].mean():.2f}")
+                m3.metric("💬 Total Reviews", len(product_data))
 
-                # Display price in text or markdown with emojis
-                avg_price = product_data['Price'].mean()
-                st.markdown(f"💰 Average Price: ₹{avg_price:.2f}")
+                col_pos, col_neg = st.columns(2)
 
-                # Display average rating
-                avg_rating = product_data['Over_All_Rating'].mean()
-                st.markdown(f"⭐ Average Rating: {avg_rating:.2f}")
+                with col_pos:
+                    st.subheader("✨ Top Positive Reviews")
+                    positive = product_data[product_data["Rating"] >= 4.5].nlargest(5, "Rating")
+                    if positive.empty:
+                        st.info("No highly positive reviews found.")
+                    for _, row in positive.iterrows():
+                        st.markdown(f"**⭐ {row['Rating']}** — {row['Comment']}")
 
-                # Display top positive comments with great ratings
-                positive_reviews = product_data[product_data['Rating'] >= 4.5].nlargest(5, 'Rating')
-                st.subheader('Positive Reviews')
-                for index, row in positive_reviews.iterrows():
-                    st.markdown(f"✨ Rating: {row['Rating']} - {row['Comment']}")
+                with col_neg:
+                    st.subheader("💢 Top Negative Reviews")
+                    negative = product_data[product_data["Rating"] <= 2].nsmallest(5, "Rating")
+                    if negative.empty:
+                        st.info("No highly negative reviews found.")
+                    for _, row in negative.iterrows():
+                        st.markdown(f"**⭐ {row['Rating']}** — {row['Comment']}")
 
-                # Display top negative comments with worst ratings
-                negative_reviews = product_data[product_data['Rating'] <= 2].nsmallest(5, 'Rating')
-                st.subheader('Negative Reviews')
-                for index, row in negative_reviews.iterrows():
-                    st.markdown(f"💢 Rating: {row['Rating']} - {row['Comment']}")
-
-                # Display rating counts in different categories
-                st.subheader('Rating Counts')
-                rating_counts = product_data['Rating'].value_counts().sort_index(ascending=False)
-                for rating, count in rating_counts.items():
-                    st.write(f"🔹 Rating {rating} count: {count}")
+                st.subheader("📈 Rating Breakdown")
+                rating_counts = (
+                    product_data["Rating"]
+                    .value_counts()
+                    .reset_index()
+                    .rename(columns={"index": "Rating", "Rating": "Count"})
+                    .sort_values("Rating", ascending=False)
+                )
+                fig_rc = px.bar(
+                    rating_counts,
+                    x="Rating",
+                    y="Count",
+                    color="Rating",
+                    title=f"Rating Counts — {product_name}",
+                    color_continuous_scale="RdYlGn",
+                )
+                st.plotly_chart(fig_rc, use_container_width=True)
